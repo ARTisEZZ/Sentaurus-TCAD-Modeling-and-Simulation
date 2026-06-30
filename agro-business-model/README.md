@@ -8,10 +8,51 @@
 
 | Файл | Назначение |
 |---|---|
-| `model.py` | Финмодель: CAPEX, OPEX, выручка, юнит-экономика, кэшфлоу, NPV/IRR/окупаемость, безубыточность, чувствительность. Чистый Python, без зависимостей. |
+| `model.py` | Финмодель: CAPEX, OPEX, выручка, юнит-экономика, кэшфлоу, NPV/IRR/окупаемость, безубыточность по 3 прогнозам × 3 схемам финансирования. Чистый Python, без зависимостей. |
+| `build_excel.py` | Генератор Excel-книги `agro_business_model.xlsx` (нужен `openpyxl`). |
+| `agro_business_model.xlsx` | **Готовая Excel-книга** с расчётом и прогнозами (см. ниже). |
 | `params.example.json` | Шаблон параметров. Скопируйте в `params.json` и правьте под свои данные. |
 | `.mcp.json` | Конфигурация MCP-серверов для сбора данных и работы с таблицами. |
 | `report.md`, `cashflow.csv` | Генерируются при запуске `model.py`. |
+
+## Excel-книга (`agro_business_model.xlsx`)
+
+Сборка: `python3 build_excel.py` (или `pip install openpyxl` → запустить).
+
+Листы:
+- **Допущения** — все входные параметры (синие ячейки редактируемы).
+- **CAPEX**, **P&L**, **Юнит-экономика**, **Денежный поток (база)** — на
+  Excel-формулах, ссылающихся на «Допущения»: правишь вход → пересчитывается
+  всё (включая NPV/IRR через функции `NPV`/`IRR`).
+- **Прогноз (3 сценария)** — пессимистичный/базовый/оптимистичный: множители
+  драйверов + сводка CAPEX/EBITDA/окупаемость/NPV/IRR по трём схемам
+  финансирования (зелёный = NPV ≥ 0, красный = NPV < 0).
+- **Чувствительность** — NPV (схема «грант») в сетке цена молока × стоимость кормов.
+- **Источники** — откуда взяты цены.
+
+> Книга записана с формулами; значения пересчитываются при открытии в Excel /
+> Google Sheets / LibreOffice. Расчётные листы (Прогноз, Чувствительность)
+> содержат готовые числа из `model.py`.
+
+## Реальные цены, заложенные в базовый сценарий (Томск, 2026)
+
+| Параметр | Значение | Источник (диапазон рынка) |
+|---|---|---|
+| Участок ИЖС | 130 тыс ₽/сотка | Томский р-н: 100–300 тыс |
+| Сельхозземля | 400 тыс ₽/га | до ~600 тыс/га |
+| Строительство дома | 50 тыс ₽/м² | Томск, каркас/брус |
+| Дойная корова | 50 тыс ₽ | Томск: 40–53 тыс |
+| Цена молока (КФХ) | 30 ₽/л | выс. сорт ~40, малым хозяйствам меньше |
+| Грант «Агростартап» | 5 млн ₽ | Томск: 3–6 млн, до 7 на КРС |
+| Льготный кредит | 5%, 7 лет | РСХБ, ставка до 5% |
+
+### Источники
+- Участки: [cian](https://tomsk.cian.ru/kupit-zemelniy-uchastok-tomskaya-oblast/), [сибдом](https://tomsk.sibdom.ru/zemlya/prodam/), [m2.ru](https://m2.ru/tomsk/nedvizhimost/kupit-uchastok/izhs/)
+- Строительство: [dom-stroy70](https://dom-stroy70.ru/building/), [kamprok](https://tomsk.kamprok.ru/doma-pod-klyuch)
+- Молоко: [vtomske](https://vtomske.ru/news/213786-ceny-na-syroe-moloko-v-tomskoi-oblasti-snizilis-iz-za-rosta-proizvodstva-i-produkcii-iz-drugih-regionov), [союзмолоко](https://souzmoloko.ru/news/pressa-o-nas/ceni-rastut.html)
+- КРС: [sobut](https://sobut.ru/tomsk/korovy-obyavleniya/), [agroserver](https://agroserver.ru/krupnyy-rogatyy-skot/f486-p1.htm)
+- Грант: [svetich](https://svetich.info/v-tomskoj-oblasti-4-fermera-poluchat-granty-agrostartap/), [своёфермерство](https://svoefermerstvo.ru/svoemedia/articles/grant-agrostartap-v-2025-godu)
+- Кредит: [РСХБ](https://www.rshb.ru/business/credits/apk-benefits)
 
 Скиллы лежат в `../.claude/skills/`: `agro-capex`, `agro-unit-economics`,
 `agro-opex-revenue`, `agro-investment`.

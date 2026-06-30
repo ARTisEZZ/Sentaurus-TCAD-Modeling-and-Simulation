@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Финансовая модель сельхозбизнеса (Томская область).
+Финансовая модель сельхозбизнеса (Томская область) — РЕАЛЬНЫЕ ЦЕНЫ 2026.
 
-Считает: CAPEX, OPEX, выручку, юнит-экономику (на корову / на га / на сотку),
-10-летний денежный поток и инвест-метрики (срок окупаемости, NPV, IRR,
-точка безубыточности) для ТРЁХ сценариев финансирования и анализ
-чувствительности.
+Считает CAPEX, OPEX, выручку, юнит-экономику, 10-летний денежный поток и
+инвест-метрики (окупаемость, NPV, IRR, безубыточность) для ТРЁХ схем
+финансирования (свои / грант КФХ / льготный кредит) и ТРЁХ прогнозов
+(пессимистичный / базовый / оптимистичный).
 
-Запуск:   python3 model.py
+Запуск:   python3 model.py          -> печатает отчёт, пишет report.md, cashflow.csv
 Зависимости: только стандартная библиотека Python 3.8+.
 
-Все суммы — в рублях (₽), горизонт по умолчанию 10 лет. Цифры ИЛЛЮСТРАТИВНЫЕ
-(оценка 2026 г. по Томскому району) — правьте словарь PARAMS под свои данные
-или положите рядом params.json (он переопределит значения).
+Источники цен (см. README → «Источники»): рынок участков Томского района,
+сельхозземля, строительство, закупочные цены на молоко, цены на КРС,
+грант «Агростартап» (Томск 3–6 млн, до 7 млн на КРС), льготный кредит РСХБ
+(ставка до 5%, срок до 7 лет). Все суммы в рублях (₽).
 """
 
 import csv
@@ -24,92 +25,103 @@ from datetime import date
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------------------
-#  ПАРАМЕТРЫ (редактируйте здесь или в params.json)
+#  БАЗОВЫЕ ПАРАМЕТРЫ — реальные ориентиры по Томску (2026). Правьте здесь
+#  или в params.json (он переопределяет значения).
 # ---------------------------------------------------------------------------
 PARAMS = {
     "horizon_years": 10,
     "discount_rate": 0.18,          # ставка дисконтирования (ключевая + премия за риск)
-    "inflation": 0.06,              # ежегодный рост цен и затрат
-    "tax_eshn_rate": 0.06,          # ЕСХН: 6% с прибыли (доходы минус расходы)
+    "inflation": 0.06,              # годовой рост цен и затрат
+    "tax_eshn_rate": 0.06,          # ЕСХН: 6% с прибыли
 
-    # --- Земля и площади ---
     "land": {
-        "izhs_area_sotka": 15,      # участок под дом (ИЖС), соток
-        "izhs_price_per_sotka": 80_000,
-        "farm_area_ha": 3.0,        # сельхозземля под поля/выпас, га
-        "farm_price_per_ha": 350_000,
+        "izhs_area_sotka": 15,
+        "izhs_price_per_sotka": 130_000,   # Томский р-н: 100–300 тыс/сотка, берём средне
+        "farm_area_ha": 3.0,
+        "farm_price_per_ha": 400_000,      # сельхозземля: ~до 600 тыс/га
     },
 
-    # --- CAPEX, разовые капитальные вложения (₽) ---
     "capex": {
         "house_m2": 80,
-        "house_price_per_m2": 45_000,
-        "utilities": 600_000,       # скважина, электричество, септик, дорога
-        "barn": 1_200_000,          # коровник на 6-10 голов
-        "hay_storage": 300_000,     # сенник/склад
-        "fencing_infra": 250_000,   # ограждение, навесы, мелочёвка
-        "machinery": 900_000,       # мини-трактор/мотоблок + навесное
-        "greenhouses": 200_000,     # теплицы и обустройство огорода
-        "reserve_pct": 0.10,        # резерв на непредвиденное от суммы CAPEX
+        "house_price_per_m2": 50_000,      # Томск: каркас/брус, дешевле Подмосковья
+        "utilities": 600_000,              # скважина, э/э, септик, подъезд
+        "barn": 1_200_000,
+        "hay_storage": 300_000,
+        "fencing_infra": 250_000,
+        "machinery": 900_000,
+        "greenhouses": 200_000,
+        "reserve_pct": 0.10,
     },
 
-    # --- Поголовье и закупка (₽) ---
     "herd": {
         "cows": 5,
-        "cow_price": 120_000,
-        "young_stock": 3,           # тёлки/бычки на выращивание
-        "young_price": 50_000,
+        "cow_price": 50_000,               # Томск: дойная 40–53 тыс
+        "young_stock": 3,
+        "young_price": 45_000,             # нетель ~45 тыс
         "goats": 4, "goat_price": 12_000,
         "pigs": 4, "pig_price": 8_000,
         "hens": 30, "hen_price": 500,
     },
 
-    # --- Продуктивность и цены (выручка) ---
     "production": {
-        "milk_l_per_cow_year": 5_500,   # надой на корову, л/год
-        "milk_price": 38,               # цена реализации молока, ₽/л
-        "milk_to_cheese_share": 0.30,   # доля молока в переработку (сыр/творог)
-        "cheese_yield": 0.10,           # кг сыра на 1 л молока
-        "cheese_price": 900,            # ₽/кг
-        "meat_kg_per_year": 600,        # мясо (выбраковка+бычки), кг/год
-        "meat_price": 380,              # ₽/кг
+        "milk_l_per_cow_year": 5_500,
+        "milk_price": 30,                  # КФХ-реализация (завод даёт меньше, чем крупным)
+        "milk_to_cheese_share": 0.30,
+        "cheese_yield": 0.10,
+        "cheese_price": 900,
+        "meat_kg_per_year": 600,
+        "meat_price": 380,
         "eggs_per_hen_year": 230,
-        "egg_price": 12,                # ₽/шт
-        "veg_revenue_year": 250_000,    # овощи/огород, выручка ₽/год
+        "egg_price": 12,
+        "veg_revenue_year": 250_000,
     },
 
-    # --- OPEX, годовые операционные затраты (₽) ---
     "opex": {
-        "feed_purchased_per_cow": 60_000,   # покупные корма на корову, ₽/год
-        "feed_self_offset_per_ha": 80_000,  # экономия на кормах с 1 га своих полей
-        "vet_per_cow": 8_000,               # ветеринария + осеменение на корову
-        "other_animals_feed": 120_000,      # корм козам/свиньям/птице
-        "fuel": 120_000,                    # ГСМ
+        "feed_purchased_per_cow": 60_000,
+        "feed_self_offset_per_ha": 80_000,
+        "vet_per_cow": 8_000,
+        "other_animals_feed": 120_000,
+        "fuel": 120_000,
         "electricity": 90_000,
-        "repairs_other": 100_000,           # ремонт, расходники, прочее
-        "hired_labor": 0,                   # наёмный труд (0 = семейный)
+        "repairs_other": 100_000,
+        "hired_labor": 0,
     },
 
-    # --- Сценарии финансирования ---
     "financing": {
-        # Грант КФХ "Агростартап": разовое поступление, покрывает часть CAPEX
-        "grant_amount": 4_000_000,
-        "grant_own_cofinance_pct": 0.10,    # обязательное софинансирование грантополучателя
-        # Льготный кредит: доля CAPEX в долг, субсидируемая ставка, срок
+        "grant_amount": 5_000_000,         # Агростартап Томск: 3–6 млн, до 7 на КРС
+        "grant_own_cofinance_pct": 0.10,
         "loan_share_of_capex": 0.60,
-        "loan_rate": 0.05,                  # льготная ставка, годовых
+        "loan_rate": 0.05,                 # льготная ставка РСХБ до 5%
         "loan_term_years": 7,
+    },
+
+    # Множители прогнозов: применяются к ключевым драйверам.
+    "forecasts": {
+        "Пессимистичный": {
+            "milk_price": 0.80, "milk_yield": 0.85, "feed_cost": 1.20,
+            "capex": 1.15, "veg_revenue": 0.70, "meat_price": 0.85,
+            "discount_add": 0.04,
+        },
+        "Базовый": {
+            "milk_price": 1.00, "milk_yield": 1.00, "feed_cost": 1.00,
+            "capex": 1.00, "veg_revenue": 1.00, "meat_price": 1.00,
+            "discount_add": 0.00,
+        },
+        "Оптимистичный": {
+            "milk_price": 1.20, "milk_yield": 1.15, "feed_cost": 0.85,
+            "capex": 0.90, "veg_revenue": 1.30, "meat_price": 1.15,
+            "discount_add": -0.03,
+        },
     },
 }
 
 
 def load_params():
-    p = json.loads(json.dumps(PARAMS))  # глубокая копия
+    p = json.loads(json.dumps(PARAMS))
     fp = os.path.join(HERE, "params.json")
     if os.path.exists(fp):
         with open(fp, encoding="utf-8") as f:
-            override = json.load(f)
-        _deep_update(p, override)
+            _deep_update(p, json.load(f))
     return p
 
 
@@ -122,12 +134,25 @@ def _deep_update(base, over):
     return base
 
 
+def apply_forecast(p, name):
+    """Вернуть копию параметров с применёнными множителями прогноза."""
+    pp = json.loads(json.dumps(p))
+    f = p["forecasts"][name]
+    pp["production"]["milk_price"] *= f["milk_price"]
+    pp["production"]["milk_l_per_cow_year"] *= f["milk_yield"]
+    pp["production"]["meat_price"] *= f["meat_price"]
+    pp["production"]["veg_revenue_year"] *= f["veg_revenue"]
+    pp["opex"]["feed_purchased_per_cow"] *= f["feed_cost"]
+    pp["_capex_mult"] = f["capex"]
+    pp["discount_rate"] = p["discount_rate"] + f["discount_add"]
+    return pp
+
+
 # ---------------------------------------------------------------------------
 #  БЛОКИ РАСЧЁТА
 # ---------------------------------------------------------------------------
 def calc_capex(p):
-    land = p["land"]
-    c = p["capex"]
+    land, c, h = p["land"], p["capex"], p["herd"]
     items = {
         "Земля ИЖС (участок под дом)": land["izhs_area_sotka"] * land["izhs_price_per_sotka"],
         "Земля сельхоз (поля/выпас)": land["farm_area_ha"] * land["farm_price_per_ha"],
@@ -138,23 +163,19 @@ def calc_capex(p):
         "Ограждение/инфраструктура": c["fencing_infra"],
         "Техника": c["machinery"],
         "Теплицы/огород": c["greenhouses"],
+        "Закупка скота (коровы)": h["cows"] * h["cow_price"],
+        "Закупка молодняка": h["young_stock"] * h["young_price"],
+        "Прочие животные": (h["goats"] * h["goat_price"] + h["pigs"] * h["pig_price"]
+                            + h["hens"] * h["hen_price"]),
     }
-    h = p["herd"]
-    items["Закупка скота (коровы)"] = h["cows"] * h["cow_price"]
-    items["Закупка молодняка"] = h["young_stock"] * h["young_price"]
-    items["Прочие животные"] = (h["goats"] * h["goat_price"]
-                                + h["pigs"] * h["pig_price"]
-                                + h["hens"] * h["hen_price"])
     subtotal = sum(items.values())
-    reserve = subtotal * c["reserve_pct"]
-    items["Резерв (непредвиденное)"] = reserve
-    total = subtotal + reserve
+    items["Резерв (непредвиденное)"] = subtotal * c["reserve_pct"]
+    total = (subtotal + items["Резерв (непредвиденное)"]) * p.get("_capex_mult", 1.0)
     return items, total
 
 
 def calc_revenue(p):
-    pr = p["production"]
-    h = p["herd"]
+    pr, h = p["production"], p["herd"]
     milk_total = h["cows"] * pr["milk_l_per_cow_year"]
     milk_to_cheese = milk_total * pr["milk_to_cheese_share"]
     milk_sold = milk_total - milk_to_cheese
@@ -169,8 +190,7 @@ def calc_revenue(p):
 
 
 def calc_opex(p):
-    o = p["opex"]
-    h = p["herd"]
+    o, h = p["opex"], p["herd"]
     feed_self_offset = p["land"]["farm_area_ha"] * o["feed_self_offset_per_ha"]
     feed_net = max(0, h["cows"] * o["feed_purchased_per_cow"] - feed_self_offset)
     items = {
@@ -186,19 +206,14 @@ def calc_opex(p):
 
 
 def unit_economics(p):
-    pr, h = p["production"], p["herd"]
-    o = p["opex"]
-    # на 1 корову
-    milk = pr["milk_l_per_cow_year"]
-    cow_rev = milk * pr["milk_price"]
+    pr, h, o = p["production"], p["herd"], p["opex"]
+    cow_rev = pr["milk_l_per_cow_year"] * pr["milk_price"]
     cow_cost = o["feed_purchased_per_cow"] + o["vet_per_cow"]
-    # на 1 га полей (экономия = выручка-эквивалент)
-    ha_value = o["feed_self_offset_per_ha"]
     return {
         "Выручка с 1 коровы (молоко), ₽/год": cow_rev,
         "Прямые затраты на 1 корову, ₽/год": cow_cost,
         "Маржа на 1 корову, ₽/год": cow_rev - cow_cost,
-        "Эффект 1 га кормовых (экономия), ₽/год": ha_value,
+        "Эффект 1 га кормовых (экономия), ₽/год": o["feed_self_offset_per_ha"],
     }
 
 
@@ -210,7 +225,6 @@ def npv(rate, flows):
 
 
 def irr(flows):
-    """IRR методом бисекции на [-0.9, 5.0]; None если знак не меняется."""
     lo, hi = -0.9, 5.0
     f_lo, f_hi = npv(lo, flows), npv(hi, flows)
     if f_lo * f_hi > 0:
@@ -221,22 +235,19 @@ def irr(flows):
         if abs(f_mid) < 1e-2:
             return mid
         if f_lo * f_mid < 0:
-            hi, f_hi = mid, f_mid
+            hi = mid
         else:
             lo, f_lo = mid, f_mid
     return (lo + hi) / 2
 
 
 def payback_period(flows):
-    """Простой срок окупаемости в годах (с дробной частью), None если не окупается."""
     cum = 0.0
     for t, cf in enumerate(flows):
         prev = cum
         cum += cf
         if cum >= 0 and t > 0:
-            need = -prev
-            frac = need / cf if cf != 0 else 0
-            return (t - 1) + frac
+            return (t - 1) + (-prev) / cf if cf else float(t)
     return None
 
 
@@ -249,21 +260,14 @@ def annuity_payment(principal, rate, years):
 
 
 def build_cashflow(p, capex_total, annual_rev, annual_opex, scenario):
-    """Возвращает список годовых чистых потоков (год 0 = инвестиции)."""
-    n = p["horizon_years"]
-    infl = p["inflation"]
-    tax = p["tax_eshn_rate"]
+    n, infl, tax = p["horizon_years"], p["inflation"], p["tax_eshn_rate"]
     fin = p["financing"]
-
-    # Стартовые вложения собственных средств в год 0 и долговое обслуживание
+    # own_capex_y0 = СОБСТВЕННЫЕ деньги, вложенные в год 0 (грант/кредит покрывают остальное).
     own_capex_y0 = capex_total
-    grant_inflow_y0 = 0.0
-    loan_principal = 0.0
     loan_pmt = 0.0
 
     if scenario == "grant":
-        grant_inflow_y0 = fin["grant_amount"]
-        # собственные = CAPEX - грант, но не меньше обязательного софинансирования
+        # грант покрывает часть CAPEX напрямую; своих — остаток, но не меньше софинансирования
         own_capex_y0 = max(capex_total - fin["grant_amount"],
                            capex_total * fin["grant_own_cofinance_pct"])
     elif scenario == "loan":
@@ -274,21 +278,11 @@ def build_cashflow(p, capex_total, annual_rev, annual_opex, scenario):
     flows = []
     for t in range(n + 1):
         if t == 0:
-            flows.append(-own_capex_y0 + grant_inflow_y0)
+            flows.append(-own_capex_y0)
             continue
         g = (1 + infl) ** (t - 1)
-        rev = annual_rev * g
-        opex = annual_opex * g
-        ebitda = rev - opex
-        interest = 0.0
-        principal_pay = 0.0
-        if scenario == "loan" and t <= fin["loan_term_years"]:
-            # для налога считаем проценты; тело долга — отток, но не расход
-            # упрощённо: проценты = остаток*ставка на начало года
-            pass
-        taxable = max(0, ebitda)  # амортизацию для ЕСХН-упрощения опускаем
-        tax_amt = taxable * tax
-        net = ebitda - tax_amt
+        ebitda = annual_rev * g - annual_opex * g
+        net = ebitda - max(0, ebitda) * tax
         if scenario == "loan" and t <= fin["loan_term_years"]:
             net -= loan_pmt
         flows.append(net)
@@ -306,8 +300,32 @@ def scenario_metrics(p, capex_total, annual_rev, annual_opex, scenario):
     }
 
 
+FIN_SCENARIOS = {"own": "Свои средства (100%)", "grant": "Грант КФХ + свои", "loan": "Льготный кредит"}
+
+
+def run_all(p):
+    """Полный расчёт по всем прогнозам и схемам финансирования."""
+    out = {}
+    for fname in p["forecasts"]:
+        pp = apply_forecast(p, fname)
+        capex_items, capex_total = calc_capex(pp)
+        rev_items, annual_rev = calc_revenue(pp)
+        opex_items, annual_opex = calc_opex(pp)
+        out[fname] = {
+            "params": pp,
+            "capex_items": capex_items, "capex_total": capex_total,
+            "rev_items": rev_items, "annual_rev": annual_rev,
+            "opex_items": opex_items, "annual_opex": annual_opex,
+            "ebitda": annual_rev - annual_opex,
+            "unit": unit_economics(pp),
+            "fin": {k: scenario_metrics(pp, capex_total, annual_rev, annual_opex, k)
+                    for k in FIN_SCENARIOS},
+        }
+    return out
+
+
 # ---------------------------------------------------------------------------
-#  ОТЧЁТ
+#  ТЕКСТОВЫЙ ОТЧЁТ
 # ---------------------------------------------------------------------------
 def fmt(x):
     return f"{x:,.0f}".replace(",", " ")
@@ -315,120 +333,47 @@ def fmt(x):
 
 def main():
     p = load_params()
-    capex_items, capex_total = calc_capex(p)
-    rev_items, annual_rev = calc_revenue(p)
-    opex_items, annual_opex = calc_opex(p)
-    ue = unit_economics(p)
-    ebitda = annual_rev - annual_opex
+    res = run_all(p)
+    base = res["Базовый"]
 
-    scenarios = {
-        "own": "Свои средства (100%)",
-        "grant": "Грант КФХ + свои",
-        "loan": "Льготный кредит",
-    }
-    results = {k: scenario_metrics(p, capex_total, annual_rev, annual_opex, k)
-               for k in scenarios}
+    L = ["# Финмодель сельхозбизнеса (Томск, реальные цены 2026)\n"]
+    L.append(f"_Сгенерировано {date.today().isoformat()}. Все суммы в ₽. "
+             f"Горизонт {p['horizon_years']} лет._\n")
 
-    # --- Markdown отчёт ---
-    L = []
-    L.append("# Финансовая модель сельхозбизнеса (Томская область)\n")
-    L.append(f"_Сгенерировано {date.today().isoformat()} скриптом `model.py`. "
-             f"Все суммы в ₽. Горизонт {p['horizon_years']} лет, "
-             f"ставка дисконтирования {p['discount_rate']*100:.0f}%._\n")
-
-    L.append("## 1. Капитальные вложения (CAPEX)\n")
-    L.append("| Статья | Сумма, ₽ |\n|---|---:|")
-    for k, v in capex_items.items():
+    L.append("## CAPEX (базовый сценарий)\n| Статья | ₽ |\n|---|---:|")
+    for k, v in base["capex_items"].items():
         L.append(f"| {k} | {fmt(v)} |")
-    L.append(f"| **ИТОГО CAPEX** | **{fmt(capex_total)}** |\n")
+    L.append(f"| **ИТОГО CAPEX** | **{fmt(base['capex_total'])}** |\n")
 
-    L.append("## 2. Годовая выручка\n")
-    L.append("| Источник | ₽/год |\n|---|---:|")
-    for k, v in rev_items.items():
-        L.append(f"| {k} | {fmt(v)} |")
-    L.append(f"| **ИТОГО выручка** | **{fmt(annual_rev)}** |\n")
+    L.append("## Годовой P&L (базовый)\n| | ₽/год |\n|---|---:|")
+    L.append(f"| Выручка | {fmt(base['annual_rev'])} |")
+    L.append(f"| OPEX | {fmt(base['annual_opex'])} |")
+    L.append(f"| **EBITDA** | **{fmt(base['ebitda'])}** |\n")
 
-    L.append("## 3. Годовые операционные затраты (OPEX)\n")
-    L.append("| Статья | ₽/год |\n|---|---:|")
-    for k, v in opex_items.items():
-        L.append(f"| {k} | {fmt(v)} |")
-    L.append(f"| **ИТОГО OPEX** | **{fmt(annual_opex)}** |\n")
-    L.append(f"**EBITDA (выручка − OPEX): {fmt(ebitda)} ₽/год**\n")
-
-    L.append("## 4. Юнит-экономика\n")
-    L.append("| Показатель | Значение |\n|---|---:|")
-    for k, v in ue.items():
-        L.append(f"| {k} | {fmt(v)} |")
+    L.append("## Окупаемость по прогнозам × финансированию\n")
+    L.append("| Прогноз | Схема | Свои вложения | Окуп., лет | NPV | IRR |")
+    L.append("|---|---|---:|---:|---:|---:|")
+    for fname in p["forecasts"]:
+        for k, name in FIN_SCENARIOS.items():
+            m = res[fname]["fin"][k]
+            pb = f"{m['payback']:.1f}" if m["payback"] is not None else "—"
+            ir = f"{m['irr']*100:.1f}%" if m["irr"] is not None else "—"
+            L.append(f"| {fname} | {name} | {fmt(m['own_investment'])} | {pb} | {fmt(m['npv'])} | {ir} |")
     L.append("")
-
-    L.append("## 5. Сценарии финансирования и окупаемость\n")
-    L.append("| Сценарий | Свои вложения, ₽ | Окупаемость, лет | NPV, ₽ | IRR |\n|---|---:|---:|---:|---:|")
-    for k, name in scenarios.items():
-        r = results[k]
-        pb = f"{r['payback']:.1f}" if r["payback"] is not None else "не окупается"
-        ir = f"{r['irr']*100:.1f}%" if r["irr"] is not None else "—"
-        L.append(f"| {name} | {fmt(r['own_investment'])} | {pb} | {fmt(r['npv'])} | {ir} |")
-    L.append("")
-
-    L.append("## 6. Денежный поток по годам (₽)\n")
-    header = "| Год | " + " | ".join(scenarios.values()) + " |"
-    L.append(header)
-    L.append("|---|" + "---:|" * len(scenarios))
-    for t in range(p["horizon_years"] + 1):
-        row = [str(t)] + [fmt(results[k]["flows"][t]) for k in scenarios]
-        L.append("| " + " | ".join(row) + " |")
-    L.append("")
-
-    # --- Точка безубыточности по поголовью ---
-    pr, o = p["production"], p["opex"]
-    margin_per_cow = (pr["milk_l_per_cow_year"] * pr["milk_price"]
-                      - o["feed_purchased_per_cow"] - o["vet_per_cow"])
-    fixed = (annual_opex - p["herd"]["cows"]
-             * (o["feed_purchased_per_cow"] + o["vet_per_cow"]))
-    # сколько коров нужно, чтобы покрыть условно-постоянные затраты
-    be_cows = fixed / margin_per_cow if margin_per_cow > 0 else None
-    L.append("## 7. Точка безубыточности\n")
-    if be_cows is not None:
-        L.append(f"- Маржа на 1 корову: **{fmt(margin_per_cow)} ₽/год**")
-        L.append(f"- Условно-постоянные затраты: **{fmt(fixed)} ₽/год**")
-        L.append(f"- Безубыточное поголовье (только дойное стадо vs пост. затраты): "
-                 f"**~{be_cows:.1f} коров**\n")
-
-    # --- Чувствительность (NPV, сценарий "свои средства") ---
-    L.append("## 8. Анализ чувствительности (NPV, сценарий «свои средства»)\n")
-    L.append("Изменяем цену молока и стоимость кормов на ±20%.\n")
-    L.append("| | Корма −20% | Корма базовые | Корма +20% |\n|---|---:|---:|---:|")
-    base_milk = p["production"]["milk_price"]
-    base_feed = p["opex"]["feed_purchased_per_cow"]
-    for milk_d, milk_lbl in [(-0.2, "Молоко −20%"), (0.0, "Молоко базовое"), (0.2, "Молоко +20%")]:
-        cells = []
-        for feed_d in (-0.2, 0.0, 0.2):
-            pp = json.loads(json.dumps(p))
-            pp["production"]["milk_price"] = base_milk * (1 + milk_d)
-            pp["opex"]["feed_purchased_per_cow"] = base_feed * (1 + feed_d)
-            _, rv = calc_revenue(pp)
-            _, ox = calc_opex(pp)
-            m = scenario_metrics(pp, capex_total, rv, ox, "own")
-            cells.append(fmt(m["npv"]))
-        L.append(f"| **{milk_lbl}** | " + " | ".join(cells) + " |")
-    L.append("")
-
-    L.append("---\n_Цифры иллюстративные. Уточняйте через MCP `fetch`/`brave-search` "
-             "актуальные цены по Томску и правьте `PARAMS`/`params.json`._")
 
     report = "\n".join(L)
     with open(os.path.join(HERE, "report.md"), "w", encoding="utf-8") as f:
         f.write(report)
-
-    # --- CSV денежного потока ---
     with open(os.path.join(HERE, "cashflow.csv"), "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["year"] + list(scenarios.keys()))
-        for t in range(p["horizon_years"] + 1):
-            w.writerow([t] + [round(results[k]["flows"][t]) for k in scenarios])
+        w.writerow(["forecast", "financing", "year", "net_flow"])
+        for fname in p["forecasts"]:
+            for k in FIN_SCENARIOS:
+                for t, cf in enumerate(res[fname]["fin"][k]["flows"]):
+                    w.writerow([fname, k, t, round(cf)])
 
     print(report)
-    print("\n[OK] Записаны report.md и cashflow.csv в", HERE)
+    print("\n[OK] report.md и cashflow.csv записаны в", HERE)
 
 
 if __name__ == "__main__":

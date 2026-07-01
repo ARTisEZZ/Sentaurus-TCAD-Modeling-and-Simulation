@@ -1,0 +1,6 @@
+# Личные данные и сгенерированные артефакты
+params.json
+agro.db
+report.md
+cashflow.csv
+__pycache__/

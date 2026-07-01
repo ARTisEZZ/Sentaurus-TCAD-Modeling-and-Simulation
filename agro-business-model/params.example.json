@@ -1,0 +1,17 @@
+{
+  "_comment": "Скопируйте в params.json и правьте под свои данные. Любой ключ переопределяет значение из PARAMS в model.py. Можно указывать только изменяемые поля.",
+  "discount_rate": 0.18,
+  "land": {
+    "izhs_price_per_sotka": 130000,
+    "farm_price_per_ha": 400000
+  },
+  "production": {
+    "milk_l_per_cow_year": 5500,
+    "milk_price": 30
+  },
+  "financing": {
+    "grant_amount": 5000000,
+    "loan_rate": 0.05,
+    "loan_term_years": 7
+  }
+}
